@@ -101,6 +101,11 @@ export interface CommentResult {
   message: string;
 }
 
+export interface CreatePostResult {
+  success: boolean;
+  message: string;
+}
+
 // ---------------------------------------------------------------------------
 // FeedActions
 // ---------------------------------------------------------------------------
@@ -613,6 +618,96 @@ export class FeedActions {
       if (out.length >= limit) break;
     }
     return out;
+  }
+
+  // -------------------------------------------------------------------------
+  // createPost
+  // -------------------------------------------------------------------------
+
+  /**
+   * Creates a new text post on the LinkedIn feed.
+   *
+   * Navigates to the feed, opens the post composer ("Start a post"), types the
+   * provided text using real keyboard input (required by the Quill editor), and
+   * submits. Optionally attaches a single image via the file-upload path.
+   *
+   * Returns success once LinkedIn clears the composer (the standard success
+   * signal). Reports failure if the composer does not open or the post button
+   * cannot be found/clicked.
+   */
+  async createPost(text: string, imagePath?: string): Promise<CreatePostResult> {
+    await getQuotaManager().enforce('post');
+
+    await navigate(this.page, `${LINKEDIN_BASE}/feed/`);
+    assertAuthenticated(this.page);
+    await rateLimitDelay();
+
+    // Open the post composer. LinkedIn renders a "Start a post" prompt button.
+    const startBtn = this.page
+      .locator(
+        'button[aria-label="Start a post"], ' +
+          'button:has-text("Start a post"), ' +
+          'div[role="button"]:has-text("Start a post")',
+      )
+      .first();
+
+    if ((await startBtn.count()) === 0) {
+      return { success: false, message: 'Could not find the "Start a post" button on the feed.' };
+    }
+    await startBtn.click();
+    await sleep(1500);
+
+    // The modal editor: Quill contenteditable.
+    const editor = this.page.locator('div.ql-editor[contenteditable="true"]').first();
+    if ((await editor.count()) === 0) {
+      return { success: false, message: 'Post composer did not open.' };
+    }
+
+    await editor.click({ force: true });
+    await this.page.keyboard.type(text, { delay: 18 });
+    await sleep(600);
+
+    // Optional image upload.
+    if (imagePath) {
+      const photoBtn = this.page
+        .locator('button[aria-label*="photo" i], button[aria-label*="image" i], button[aria-label*="media" i]')
+        .first();
+      if ((await photoBtn.count()) > 0) {
+        await photoBtn.click();
+        await sleep(800);
+        const fileInput = this.page.locator('input[type="file"]').first();
+        if ((await fileInput.count()) > 0) {
+          await fileInput.setInputFiles(imagePath).catch(() => undefined);
+          await sleep(1500);
+        }
+      }
+    }
+
+    await rateLimitDelay();
+
+    // Submit. LinkedIn's post button sits outside the Quill editor area.
+    const postBtn = this.page
+      .locator(
+        'button.share-actions__primary-action, ' +
+          'button[aria-label="Post"], ' +
+          'div[role="dialog"] button:has-text("Post")',
+      )
+      .first();
+
+    if ((await postBtn.count()) === 0) {
+      return { success: false, message: 'Post submit button not found.' };
+    }
+    await postBtn.click({ force: true });
+    await sleep(2000);
+
+    // Verify: the modal should be gone and the composer cleared.
+    const modalStillOpen = (await this.page.locator('div.ql-editor[contenteditable="true"]').count()) > 0;
+    if (modalStillOpen) {
+      return { success: false, message: 'Post may not have been submitted — composer is still open.' };
+    }
+
+    await getQuotaManager().record('post');
+    return { success: true, message: 'Post published successfully.' };
   }
 
   // -------------------------------------------------------------------------

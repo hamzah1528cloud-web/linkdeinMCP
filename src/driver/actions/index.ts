@@ -16,6 +16,7 @@ export type {
   EducationEntry,
   ContactInfo,
   RecommendationEntry,
+  UpdateProfileResult,
 } from './profile';
 
 export { SearchActions } from './search';
@@ -23,6 +24,7 @@ export type {
   SearchResult,
   JobResult,
   CompanyResult,
+  ContentResult,
   PeopleFilters,
   JobFilters,
   CompanyFilters,
@@ -43,10 +45,11 @@ export type {
   ReactionType,
   ReactionResult,
   CommentResult,
+  CreatePostResult,
 } from './feed';
 
 export { JobActions } from './jobs';
-export type { ApplyJobResult, ApplyJobOptions, ScreeningAnswers } from './jobs';
+export type { ApplyJobResult, ApplyJobOptions, ScreeningAnswers, RecommendedJob } from './jobs';
 
 export {
   NeedsLoginError,

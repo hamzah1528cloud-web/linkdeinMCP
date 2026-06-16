@@ -522,6 +522,109 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: 'linkedin_create_post',
+    description:
+      'Create a new text post on the authenticated member\'s LinkedIn feed. ' +
+      'Optionally attach a single image by providing an absolute file path. ' +
+      'Capped at 5 posts/day to avoid spam restrictions. Write actions must be ' +
+      'enabled via LINKEDIN_ALLOW_MUTATIONS=create_post (or "all").',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description: 'The body text of the post. Supports plain text; LinkedIn renders line breaks.',
+        },
+        imagePath: {
+          type: 'string',
+          description:
+            'Absolute local filesystem path to an image file (JPG/PNG/GIF) to attach. ' +
+            'Optional — omit for a text-only post.',
+        },
+      },
+      required: ['text'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'linkedin_update_profile',
+    description:
+      'Update fields on the authenticated member\'s own LinkedIn profile. ' +
+      'Currently supports `headline` (the line under your name) and `about` ' +
+      '(the Summary/About section). Only fields you provide are changed; ' +
+      'omitted fields are left untouched. Write actions must be enabled via ' +
+      'LINKEDIN_ALLOW_MUTATIONS=update_profile (or "all").',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        headline: {
+          type: 'string',
+          description:
+            'New professional headline (the line displayed under your name). ' +
+            'Max 220 characters.',
+        },
+        about: {
+          type: 'string',
+          description:
+            'New About / Summary section text. Max 2600 characters. Supports plain text ' +
+            'with line breaks.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'linkedin_search_content',
+    description:
+      'Search LinkedIn posts/content by keyword. Returns post previews (author, ' +
+      'snippet, URL, timestamp) from the content search vertical. Sort by ' +
+      'date_posted (default) for recency or by relevance.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: "Keywords to search for, e.g. 'TypeScript performance tips'.",
+        },
+        limit: {
+          type: 'integer',
+          description: 'Maximum number of posts to return.',
+          minimum: 1,
+          maximum: 25,
+          default: 10,
+        },
+        sortBy: {
+          type: 'string',
+          enum: ['date_posted', 'relevance'],
+          description: 'Sort order. Defaults to date_posted (most recent first).',
+          default: 'date_posted',
+        },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'linkedin_get_job_recommendations',
+    description:
+      'Fetch personalized job recommendations from the LinkedIn Jobs homepage. ' +
+      'Returns the "Recommended for you" cards with title, company, location, ' +
+      'job URL, Easy Apply flag, and posted date.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'integer',
+          description: 'Maximum number of job cards to return.',
+          minimum: 1,
+          maximum: 25,
+          default: 10,
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'linkedin_apply_job',
     description:
       'Apply to a LinkedIn job via the Easy Apply wizard. Navigates to the ' +
@@ -900,6 +1003,47 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
     const driver = await withAuthedDriver();
     const limit = optionalInt(args, 'limit', 1, 50);
     const result = await driver.feed.getNotifications(limit);
+    return jsonResult(result);
+  },
+
+  linkedin_create_post: async (args) => {
+    const driver = await withAuthedDriver();
+    const text = requireString(args, 'text');
+    const imagePath = optionalString(args, 'imagePath');
+    const result = await driver.feed.createPost(text, imagePath);
+    return jsonResult(result);
+  },
+
+  linkedin_update_profile: async (args) => {
+    const driver = await withAuthedDriver();
+    const headline = optionalString(args, 'headline');
+    const about = optionalString(args, 'about');
+    if (!headline && !about) {
+      throw new McpToolError('Provide at least one field to update: headline or about.');
+    }
+    const result = await driver.profile.updateProfile({
+      ...(headline !== undefined ? { headline } : {}),
+      ...(about !== undefined ? { about } : {}),
+    });
+    return jsonResult(result);
+  },
+
+  linkedin_search_content: async (args) => {
+    const driver = await withAuthedDriver();
+    const query = requireString(args, 'query');
+    const limit = optionalInt(args, 'limit', 1, 25);
+    const sortByRaw = optionalEnum(args, 'sortBy', ['date_posted', 'relevance'] as const);
+    const result = await driver.search.searchContent(query, {
+      ...(limit !== undefined ? { limit } : {}),
+      ...(sortByRaw !== undefined ? { sortBy: sortByRaw } : {}),
+    });
+    return jsonResult(result);
+  },
+
+  linkedin_get_job_recommendations: async (args) => {
+    const driver = await withAuthedDriver();
+    const limit = optionalInt(args, 'limit', 1, 25);
+    const result = await driver.jobs.getRecommendedJobs(limit);
     return jsonResult(result);
   },
 

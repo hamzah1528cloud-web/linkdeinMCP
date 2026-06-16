@@ -20,6 +20,7 @@ import type { Page } from 'playwright';
 
 import {
   LINKEDIN_BASE,
+  ActionError,
   assertAuthenticated,
   clean,
   isAuthWallUrl,
@@ -57,6 +58,13 @@ export interface RecommendationEntry {
   author?: string;
   relationship?: string;
   text?: string;
+}
+
+export interface UpdateProfileResult {
+  success: boolean;
+  message: string;
+  updated: string[];
+  failed: Array<{ field: string; reason: string }>;
 }
 
 /** Fully normalized profile payload. */
@@ -677,5 +685,158 @@ export class ProfileActions {
     const dateRange = clean(dateLine);
     if (dateRange) entry.dateRange = dateRange;
     return entry;
+  }
+
+  // -------------------------------------------------------------------------
+  // updateProfile
+  // -------------------------------------------------------------------------
+
+  /**
+   * Updates editable fields on the authenticated member's own profile.
+   *
+   * Supports `headline` and `about`. Each is updated independently via its own
+   * edit dialog. Fields that are `undefined` in the options are left untouched.
+   * Returns per-field outcome so the caller knows exactly what changed.
+   */
+  async updateProfile(opts: {
+    headline?: string;
+    about?: string;
+  }): Promise<UpdateProfileResult> {
+    await navigate(this.page, `${LINKEDIN_BASE}/in/me/`);
+    assertAuthenticated(this.page);
+    await rateLimitDelay();
+
+    const results: UpdateProfileResult = { success: false, message: '', updated: [], failed: [] };
+
+    if (opts.headline !== undefined) {
+      try {
+        await this.editIntroField('headline', opts.headline);
+        results.updated.push('headline');
+      } catch (e) {
+        results.failed.push({ field: 'headline', reason: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    if (opts.about !== undefined) {
+      try {
+        await this.editAboutSection(opts.about);
+        results.updated.push('about');
+      } catch (e) {
+        results.failed.push({ field: 'about', reason: e instanceof Error ? e.message : String(e) });
+        // suppress unused var lint
+      }
+    }
+
+    results.success = results.failed.length === 0 && results.updated.length > 0;
+    results.message =
+      results.updated.length > 0
+        ? `Updated: ${results.updated.join(', ')}.${results.failed.length > 0 ? ` Failed: ${results.failed.map((f) => f.field).join(', ')}.` : ''}`
+        : 'No fields were updated.';
+
+    return results;
+  }
+
+  /**
+   * Opens the "Edit intro" dialog, updates the named field, and saves.
+   * The intro dialog contains headline, first/last name, location, etc.
+   */
+  private async editIntroField(_field: 'headline', value: string): Promise<void> {
+    // The edit intro button is near the profile top card.
+    const editBtn = this.page
+      .locator(
+        'button[aria-label*="Edit intro"], ' +
+          'a[aria-label*="Edit intro"], ' +
+          'button[aria-label*="Edit your intro"], ' +
+          'section.pv-top-card-v2-ctas button[aria-label*="Edit"]',
+      )
+      .first();
+
+    if ((await editBtn.count()) === 0) {
+      throw new ActionError('Edit intro button not found.', 'edit_intro_missing');
+    }
+    await editBtn.click();
+    await sleep(1200);
+
+    // Headline input inside the modal.
+    const input = this.page
+      .locator(
+        'input[name="headline"], ' +
+          'input[id*="headline"], ' +
+          'input[aria-label*="Headline" i]',
+      )
+      .first();
+
+    if ((await input.count()) === 0) {
+      throw new ActionError('Headline input not found in the edit dialog.', 'field_missing');
+    }
+
+    await input.click({ clickCount: 3 });
+    await input.fill(value);
+    await sleep(400);
+
+    await this.saveDialog();
+  }
+
+  /** Opens the About section edit dialog, replaces the text, and saves. */
+  private async editAboutSection(value: string): Promise<void> {
+    // Navigate back to own profile to ensure About section is visible.
+    await navigate(this.page, `${LINKEDIN_BASE}/in/me/`);
+    await rateLimitDelay();
+
+    const aboutEditBtn = this.page
+      .locator(
+        'section:has(#about) button[aria-label*="Edit"], ' +
+          'div#about ~ * button[aria-label*="Edit"], ' +
+          'button[aria-label*="Edit about"], ' +
+          'button[aria-label*="Edit About"]',
+      )
+      .first();
+
+    if ((await aboutEditBtn.count()) === 0) {
+      // Scroll down to make sure the About section loaded, then retry.
+      await this.page.evaluate(() => window.scrollBy(0, 400));
+      await sleep(800);
+      if ((await aboutEditBtn.count()) === 0) {
+        throw new ActionError('About section edit button not found.', 'edit_about_missing');
+      }
+    }
+    await aboutEditBtn.click();
+    await sleep(1200);
+
+    const textarea = this.page
+      .locator(
+        'textarea[name="summary"], ' +
+          'textarea[id*="summary"], ' +
+          'div[role="dialog"] textarea',
+      )
+      .first();
+
+    if ((await textarea.count()) === 0) {
+      throw new ActionError('About textarea not found in the edit dialog.', 'field_missing');
+    }
+
+    await textarea.click({ clickCount: 3 });
+    await textarea.fill(value);
+    await sleep(400);
+
+    await this.saveDialog();
+  }
+
+  /** Clicks the Save button in the currently open edit dialog. */
+  private async saveDialog(): Promise<void> {
+    await rateLimitDelay();
+    const saveBtn = this.page
+      .locator(
+        'button[aria-label="Save"], ' +
+          'div[role="dialog"] button:has-text("Save"), ' +
+          'button[type="submit"]:has-text("Save")',
+      )
+      .first();
+
+    if ((await saveBtn.count()) === 0) {
+      throw new ActionError('Save button not found in the edit dialog.', 'save_missing');
+    }
+    await saveBtn.click();
+    await sleep(1500);
   }
 }

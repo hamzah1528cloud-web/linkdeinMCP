@@ -17,7 +17,7 @@ import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 /** The mutating actions we meter. Reads are never quota-limited. */
-export type QuotaAction = 'connection' | 'message' | 'reaction' | 'comment';
+export type QuotaAction = 'connection' | 'message' | 'reaction' | 'comment' | 'post';
 
 /**
  * Conservative daily ceilings. LinkedIn's real limits are higher and fuzzy
@@ -29,6 +29,7 @@ const DEFAULT_CAPS: Record<QuotaAction, number> = {
   message: 60,
   reaction: 150,
   comment: 30,
+  post: 5,
 };
 
 /** Thrown when an action would exceed its daily cap. */

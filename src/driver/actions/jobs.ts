@@ -73,6 +73,15 @@ export interface ApplyJobResult {
   message: string;
 }
 
+export interface RecommendedJob {
+  title?: string;
+  company?: string;
+  location?: string;
+  jobUrl: string;
+  easyApply: boolean;
+  postedDate?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -277,6 +286,71 @@ export class JobActions {
       stepsCompleted,
       message: `Reached the maximum step limit (${MAX_STEPS}) without completing the application.`,
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // getRecommendedJobs
+  // -------------------------------------------------------------------------
+
+  /**
+   * Fetches job recommendations from the LinkedIn Jobs homepage.
+   *
+   * Navigates to `/jobs/` and scrapes the "Recommended for you" / "Jobs you
+   * may be interested in" section. Returns normalized job cards with title,
+   * company, location, jobUrl, easyApply flag, and posted date.
+   */
+  async getRecommendedJobs(limit = 10): Promise<RecommendedJob[]> {
+    await navigate(this.page, `${LINKEDIN_BASE}/jobs/`);
+    assertAuthenticated(this.page);
+    await rateLimitDelay();
+
+    await sleep(2000);
+
+    const raw = await this.page.evaluate((cap) => {
+      const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
+      const ACTIVITY_RE = /\/jobs\/view\/(\d+)/;
+      const seen = new Set<string>();
+      const out: Array<{ href: string; lines: string[] }> = [];
+
+      // Job cards on the jobs homepage link to /jobs/view/<id>/.
+      const anchors = Array.from(document.querySelectorAll('a[href*="/jobs/view/"]'));
+      for (const a of anchors) {
+        const href = (a as HTMLAnchorElement).href ?? '';
+        const m = href.match(ACTIVITY_RE);
+        const id = m?.[1] ?? '';
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const card = a.closest('li') ?? a.closest('article') ?? a.parentElement;
+        if (!card) continue;
+        const stop = new Set<string>();
+        const lines = ((card as HTMLElement).innerText ?? '')
+          .split('\n')
+          .map(norm)
+          .filter((t) => { if (!t || stop.has(t)) return false; stop.add(t); return true; });
+        out.push({ href, lines });
+        if (out.length >= cap) break;
+      }
+      return out;
+    }, limit);
+
+    const TIME_RE = /\b(ago|hour|day|week|month|minute)s?\b|just now/i;
+    return raw
+      .map((r): RecommendedJob | null => {
+        const url = r.href.split('?')[0];
+        if (!url) return null;
+        const easyApply = r.lines.some((l) => /easy apply/i.test(l));
+        const title = r.lines[0];
+        const company = r.lines[1];
+        const location = r.lines.slice(2).find((l) => /,/.test(l) || /remote|hybrid|on.?site/i.test(l));
+        const postedDate = r.lines.find((l) => TIME_RE.test(l));
+        const job: RecommendedJob = { jobUrl: url ?? '', easyApply };
+        if (title) job.title = title;
+        if (company) job.company = company;
+        if (location) job.location = location;
+        if (postedDate) job.postedDate = postedDate;
+        return job;
+      })
+      .filter((j): j is RecommendedJob => j !== null);
   }
 
   // -------------------------------------------------------------------------

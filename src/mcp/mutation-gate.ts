@@ -18,6 +18,8 @@ export const MUTATING_TOOLS: ReadonlySet<string> = new Set<string>([
   'linkedin_react',
   'linkedin_comment',
   'linkedin_apply_job',
+  'linkedin_create_post',
+  'linkedin_update_profile',
 ]);
 
 export function isMutatingTool(name: string): boolean {

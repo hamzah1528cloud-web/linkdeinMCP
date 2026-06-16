@@ -310,6 +310,13 @@ export interface JobResult {
   easyApply?: boolean;
 }
 
+export interface ContentResult {
+  postUrl: string;
+  author?: string;
+  snippet?: string;
+  timestamp?: string;
+}
+
 export interface CompanyResult {
   name?: string;
   industry?: string;
@@ -736,6 +743,75 @@ export class SearchActions {
     if (location) result.location = location;
     if (followers) result.followers = followers;
     return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // searchContent
+  // -------------------------------------------------------------------------
+
+  /**
+   * Searches LinkedIn content (posts) by keyword and returns a list of post
+   * previews: author, snippet, post URL, and timestamp.
+   *
+   * Uses the `/search/results/content/` vertical with an optional `sortBy`
+   * filter (`date_posted` for recency, `relevance` for best match).
+   */
+  async searchContent(
+    query: string,
+    opts: { limit?: number; sortBy?: 'date_posted' | 'relevance' } = {},
+  ): Promise<ContentResult[]> {
+    const limit = Math.min(opts.limit ?? 10, 25);
+    const sortBy = opts.sortBy ?? 'date_posted';
+    const params = new URLSearchParams({ keywords: query, sortBy });
+    const url = `${LINKEDIN_BASE}/search/results/content/?${params.toString()}`;
+
+    await navigate(this.page, url);
+    assertAuthenticated(this.page);
+    await rateLimitDelay();
+
+    await autoScroll(this.page, '[data-chameleon-result-urn]', limit).catch(() => undefined);
+
+    const raw = await this.page.evaluate((cap) => {
+      const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
+      const root: HTMLElement = document.querySelector('main') ?? document.body;
+      const ACTIVITY_RE = /urn(?::|%3A)li(?::|%3A)activity(?::|%3A)(\d+)/i;
+      const seen = new Set<string>();
+      const out: Array<{ id: string; href: string; lines: string[] }> = [];
+
+      // Content search cards each contain an activity URN in their data attribute.
+      for (const el of Array.from(root.querySelectorAll('[data-chameleon-result-urn]'))) {
+        const urnAttr = el.getAttribute('data-chameleon-result-urn') ?? '';
+        const m = urnAttr.match(ACTIVITY_RE);
+        const id = m?.[1] ?? '';
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const anchor = el.querySelector('a[href*="/feed/update/"]') as HTMLAnchorElement | null;
+        const href = anchor?.href ?? '';
+        const stop = new Set<string>();
+        const lines = ((el as HTMLElement).innerText ?? '')
+          .split('\n')
+          .map(norm)
+          .filter((t) => { if (!t || stop.has(t)) return false; stop.add(t); return true; });
+        out.push({ id, href, lines });
+        if (out.length >= cap) break;
+      }
+      return out;
+    }, limit);
+
+    const TIME_RE = /(•|·)?\s*\d+\s*(m|h|d|w|mo|y|hour|day|week|month|year)s?\b|ago/i;
+    const ACTION_RE = /^(like|comment|repost|send|follow|likes?|comments?|reposts?)$/i;
+    return raw.map((r) => {
+      const result: ContentResult = {
+        postUrl: r.href || `${LINKEDIN_BASE}/feed/update/urn:li:activity:${r.id}/`,
+      };
+      const timestamp = r.lines.find((l) => TIME_RE.test(l));
+      if (timestamp) result.timestamp = timestamp;
+      const nonAction = r.lines.filter((l) => !ACTION_RE.test(l) && !TIME_RE.test(l));
+      if (nonAction[0]) result.author = nonAction[0];
+      const body = nonAction.filter((l) => l !== result.author).sort((a, b) => b.length - a.length)[0];
+      if (body) result.snippet = body.slice(0, 300);
+      return result;
+    });
   }
 
   private cleanProfileUrl(href: string): string {
