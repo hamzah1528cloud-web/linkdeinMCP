@@ -18,8 +18,10 @@
  *     until then, keeping process startup (especially MCP mode) fast.
  */
 
+import { join } from 'node:path';
+
 import { BrowserManager } from './browser';
-import { SessionManager, getSessionManager } from './session';
+import { SessionManager, getSessionManager, SESSION_PATH } from './session';
 import { AuthActions } from './actions/auth';
 import { ProfileActions } from './actions/profile';
 import { SearchActions } from './actions/search';
@@ -186,7 +188,11 @@ export class LinkedInDriver {
 
   /** (Re)bind every action module to the given primary page. */
   private wireActions(page: Page): void {
-    this.auth = new AuthActions(page);
+    const userDataDir = join(SESSION_PATH, '..');
+    this.auth = new AuthActions(page, {
+      storageStatePath: join(userDataDir, 'storageState.json'),
+      profileDir: join(userDataDir, 'playwright-profile'),
+    });
     this.profile = new ProfileActions(page);
     this.search = new SearchActions(page);
     this.messages = new MessagingActions(page);
